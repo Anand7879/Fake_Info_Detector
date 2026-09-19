@@ -49,10 +49,13 @@ develop-eggs/
 dist/
 downloads/
 eggs/
-.eggs/
-lib/
-lib64/
-parts/
+# Virtual environment lib folders (do not ignore frontend/src/lib)
+/lib/
+/lib64/
+venv/lib/
+env/lib/
+!frontend/src/lib/
+!frontend/src/lib/**
 sdist/
 var/
 wheels/
