@@ -4,7 +4,11 @@ const axios = require('axios');
 const FormData = require('form-data');
 const db = require('../config/db');
 
-const AI_ENGINE_URL = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+let rawAiUrl = (process.env.AI_ENGINE_URL || 'http://localhost:8000').trim();
+if (rawAiUrl && !rawAiUrl.startsWith('http://') && !rawAiUrl.startsWith('https://')) {
+  rawAiUrl = 'http://' + rawAiUrl;
+}
+const AI_ENGINE_URL = rawAiUrl;
 
 async function saveVerificationRecord({
   userId, modality, inputSummary, result, filePath = null

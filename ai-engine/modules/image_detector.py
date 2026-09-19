@@ -120,30 +120,49 @@ class ModelManager:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.loaded_models: Dict[str, Any] = {}
         self.loaded_processors: Dict[str, Any] = {}
-        self._load_all()
         self._initialized = True
+        logger.info(f"[ModelManager] Initialized with on-demand lazy loading (Device: {self.device}). Zero memory allocated at startup.")
 
-    def _load_all(self):
-        logger.info(f"[ModelManager] Loading 5 models on device: {self.device}")
-        for key, conf in MODELS_CONFIG.items():
-            model_id = conf["id"]
-            model_cls = conf["cls"]
-            try:
-                proc = AutoImageProcessor.from_pretrained(model_id, use_fast=False)
-                model = model_cls.from_pretrained(model_id).to(self.device)
-                model.eval()
-                self.loaded_processors[key] = proc
-                self.loaded_models[key] = model
-                logger.info(f"[ModelManager] Loaded {key} ({model_id}) successfully.")
-            except Exception as e:
-                logger.error(f"[ModelManager] Error loading {key}: {e}")
+    def _get_or_load(self, key: str):
+        if key in self.loaded_models:
+            return self.loaded_models[key], self.loaded_processors[key]
+
+        if key not in MODELS_CONFIG:
+            return None, None
+
+        conf = MODELS_CONFIG[key]
+        model_id = conf["id"]
+        model_cls = conf["cls"]
+
+        # Memory optimization for 512MB cloud free tiers (e.g. Render / Koyeb):
+        # Keep at most 1 active vision transformer in RAM at a time to stay strictly below 512MiB.
+        if len(self.loaded_models) >= 1:
+            logger.info(f"[ModelManager] Freeing memory before loading {key}...")
+            self.loaded_models.clear()
+            self.loaded_processors.clear()
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        try:
+            logger.info(f"[ModelManager] Loading model on-demand: {key} ({model_id})...")
+            proc = AutoImageProcessor.from_pretrained(model_id, use_fast=False)
+            model = model_cls.from_pretrained(model_id).to(self.device)
+            model.eval()
+            self.loaded_processors[key] = proc
+            self.loaded_models[key] = model
+            logger.info(f"[ModelManager] Successfully loaded {key} on-demand.")
+            return model, proc
+        except Exception as e:
+            logger.error(f"[ModelManager] Error loading {key} on-demand: {e}")
+            return None, None
 
     def infer(self, key: str, image: Image.Image) -> Optional[torch.Tensor]:
-        if key not in self.loaded_models:
+        model, proc = self._get_or_load(key)
+        if model is None or proc is None:
             return None
         try:
-            proc = self.loaded_processors[key]
-            model = self.loaded_models[key]
             inputs = proc(images=image, return_tensors="pt").to(self.device)
             with torch.no_grad():
                 outputs = model(**inputs)
