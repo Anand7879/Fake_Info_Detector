@@ -1,0 +1,37 @@
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Python FastAPI AI Engine Service (100% Free on Render)
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: fake-info-ai-engine
+    env: python
+    rootDir: ai-engine
+    plan: free
+    buildCommand: "pip install --upgrade pip && pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PORT
+        value: 8000
+
+  # ----------------------------------------------------------------------------
+  # 2. Node.js Express API Gateway Service (100% Free on Render)
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: fake-info-backend
+    env: node
+    rootDir: backend
+    plan: free
+    buildCommand: "npm install"
+    startCommand: "npm start"
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: AI_ENGINE_URL
+        fromService:
+          type: web
+          name: fake-info-ai-engine
+          property: host
