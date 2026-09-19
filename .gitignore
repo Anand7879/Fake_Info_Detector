@@ -1,0 +1,124 @@
+# ==============================================================================
+# FAKE INFO DETECTOR — MASTER GITIGNORE
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Environment Variables & Secret Credentials
+# ------------------------------------------------------------------------------
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+*.env.*
+!.env.example
+
+# ------------------------------------------------------------------------------
+# 2. Node.js & Frontend Build Outputs
+# ------------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.next/
+out/
+build/
+dist/
+.turbo/
+.vercel/
+coverage/
+
+# ------------------------------------------------------------------------------
+# 3. Python, Virtual Environments & Caches
+# ------------------------------------------------------------------------------
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ------------------------------------------------------------------------------
+# 4. Uploaded Evidence & Temporary User Media
+# ------------------------------------------------------------------------------
+backend/uploads/*
+!backend/uploads/.gitkeep
+uploads/
+scratch/
+ai-engine/scratch/
+*.tmp
+*.temp
+*.bak
+*.swp
+
+# ------------------------------------------------------------------------------
+# 5. Local Portable Binaries & Dependencies
+# ------------------------------------------------------------------------------
+bin/
+bin/nodejs/
+
+# ------------------------------------------------------------------------------
+# 6. Large Machine Learning Model Weights & Checkpoints
+# (Weights should be downloaded via download_weights.py or HuggingFace cache)
+# ------------------------------------------------------------------------------
+*.onnx
+*.h5
+*.hdf5
+*.bin
+*.pt
+*.pth
+*.safetensors
+ai-engine/weights/*.h5
+ai-engine/weights/*.bin
+ai-engine/weights/*.pt
+ai-engine/weights/*.safetensors
+
+# ------------------------------------------------------------------------------
+# 7. OS & Editor Artifacts
+# ------------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# IDE & Editor configurations
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.sublime-workspace
+*.sublime-project
