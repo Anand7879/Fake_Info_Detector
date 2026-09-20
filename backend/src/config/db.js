@@ -244,6 +244,12 @@ async function initializeDatabase() {
         if (fs.existsSync(schemaPath)) {
           const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
           await client.query(schemaSql);
+          // Drop foreign key constraint if previously created, so user_id can never cause constraint violation
+          try {
+            await client.query('ALTER TABLE verifications DROP CONSTRAINT IF EXISTS verifications_user_id_fkey;');
+          } catch (dropErr) {
+            // Ignore if constraint doesn't exist
+          }
           console.log('[DB] PostgreSQL schema initialized & verified (users, verifications, password_resets tables active).');
         }
         dbType = 'postgres';

@@ -5,6 +5,11 @@ import { ShieldCheck, Github, Twitter, Linkedin } from 'lucide-react';
 export const metadata = {
   title: 'Fake Info Detector — Multi-Modal AI Misinformation Verification Platform',
   description: 'AI-powered forensics platform verifying text, images, videos, URLs, and documents for tampering, deepfakes, and misinformation.',
+  icons: {
+    icon: '/favicon.svg',
+    shortcut: '/favicon.svg',
+    apple: '/favicon.svg',
+  },
 };
 
 export const viewport = {

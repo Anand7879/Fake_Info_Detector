@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, optionalAuth } = require('../middleware/auth');
 const {
   getHistory,
   getVerificationById,
@@ -9,10 +9,10 @@ const {
   getDashboardStats
 } = require('../controllers/historyController');
 
-router.get('/', authenticateToken, getHistory);
-router.get('/stats', authenticateToken, getDashboardStats);
+router.get('/', optionalAuth, getHistory);
+router.get('/stats', optionalAuth, getDashboardStats);
 router.post('/batch-delete', authenticateToken, deleteMultipleVerifications);
-router.get('/:id', authenticateToken, getVerificationById);
+router.get('/:id', optionalAuth, getVerificationById);
 router.delete('/:id', authenticateToken, deleteVerification);
 
 

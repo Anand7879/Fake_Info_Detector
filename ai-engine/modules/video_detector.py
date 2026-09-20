@@ -65,16 +65,16 @@ def check_ai_generator_watermark(frame: np.ndarray) -> Tuple[bool, Optional[str]
 
 def verify_video(
     video_path: str,
-    sample_interval_frames: int = 10,
-    max_frames_to_process: int = 6
+    sample_interval_frames: int = 15,
+    max_frames_to_process: int = 4
 ) -> Dict[str, Any]:
     """
-    High-Precision, Low-Latency Deepfake Video Verification Pipeline:
-    1. Uniformly extracts keyframes across video duration, skipping edge intro/outro transitions.
-    2. Fast 512px downscaling for CPU inference acceleration without losing micro-textures.
+    High-Precision, Ultra-Low-Latency Deepfake Video Verification Pipeline:
+    1. Uniformly extracts 4 keyframes across video duration, skipping edge intro/outro transitions.
+    2. Fast 448px downscaling for maximum face detection throughput while preserving texture micro-details.
     3. AI Generator Watermark Forensics: Scans for synthetic platform signatures (Magic Hour, Runway, etc.).
-    4. Face-Focused Routing with Single-Pass Model Inference (models loaded once, not reloaded per frame).
-    5. Sustained Anomaly Decision Engine: Robust across both face-swaps, talking-head animations, and authentic camera footage.
+    4. Parallel Batch Model Inference: Evaluates all face crops in single GPU/CPU tensor batches.
+    5. Sustained Anomaly Decision Engine: Robust across face-swaps, talking-head animations, and authentic footage.
     """
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video file not found: {video_path}")
@@ -123,10 +123,10 @@ def verify_video(
         if has_wm and wm_name:
             watermark_hits.append(wm_name)
 
-        # Fast downscale to 512px for CPU inference acceleration without losing micro-textures
+        # Fast downscale to 448px for swift neural input alignment
         h_f, w_f, _ = frame.shape
-        if w_f > 512:
-            frame_resized = cv2.resize(frame, (512, int(h_f * 512.0 / w_f)), interpolation=cv2.INTER_AREA)
+        if w_f > 448:
+            frame_resized = cv2.resize(frame, (448, int(h_f * 448.0 / w_f)), interpolation=cv2.INTER_AREA)
         else:
             frame_resized = frame
 
@@ -174,38 +174,52 @@ def verify_video(
     cap.release()
 
     # -------------------------------------------------------------
-    # High-Performance Single-Pass Model Inference
-    # Models are evaluated in single passes to eliminate repeated load/unload disk churn
+    # True Batch Neural Tensor Inference
+    # Evaluates all extracted keyframes simultaneously in single batched GPU forward passes
     # -------------------------------------------------------------
     face_items = [c for c in raw_candidates if c["has_face"] and c["pil_face"] is not None]
     scene_items = [c for c in raw_candidates if not c["has_face"] or c["pil_face"] is None]
 
-    # Pass 1: DeepFake-Detector-v2 on all faces
+    # Batch Pass 1: DeepFake-Detector-v2 on all face crops
     v2_results = {}
-    for item in face_items:
-        l_v2 = model_manager.infer("deepfake_v2", item["pil_face"])
-        p_v2 = float(torch.softmax(l_v2, dim=-1)[0][1].item()) if l_v2 is not None else 0.10
-        v2_results[item["frame_target"]] = p_v2
-
-    # Pass 2: CommunityForensics on all faces
-    cf_results = {}
-    for item in face_items:
-        l_cf = model_manager.infer("community_forensics", item["pil_face"])
-        s_cf = float(torch.sigmoid(l_cf).item()) if l_cf is not None else 0.0
-        cf_results[item["frame_target"]] = s_cf
-
-    # Pass 3: Scene Evaluation for non-face frames
-    scene_results = {}
-    for item in scene_items:
-        l_scene = model_manager.infer("ai_deepfake_real", item["pil_frame"])
-        if l_scene is not None:
-            p_scene = torch.softmax(l_scene, dim=-1)[0]
-            p_ai = float(p_scene[0].item())
-            p_df_scene = float(p_scene[1].item())
-            scene_fake_score = float(p_df_scene + p_ai * 0.95)
+    if face_items:
+        faces_pil = [item["pil_face"] for item in face_items]
+        batch_l_v2 = model_manager.batch_infer("deepfake_v2", faces_pil)
+        if batch_l_v2 is not None:
+            probs = torch.softmax(batch_l_v2, dim=-1)
+            for idx, item in enumerate(face_items):
+                v2_results[item["frame_target"]] = float(probs[idx][1].item())
         else:
-            scene_fake_score = 0.10
-        scene_results[item["frame_target"]] = scene_fake_score
+            for item in face_items:
+                v2_results[item["frame_target"]] = 0.10
+
+    # Batch Pass 2: CommunityForensics on all face crops
+    cf_results = {}
+    if face_items:
+        faces_pil = [item["pil_face"] for item in face_items]
+        batch_l_cf = model_manager.batch_infer("community_forensics", faces_pil)
+        if batch_l_cf is not None:
+            sigs = torch.sigmoid(batch_l_cf)
+            for idx, item in enumerate(face_items):
+                cf_results[item["frame_target"]] = float(sigs[idx].item())
+        else:
+            for item in face_items:
+                cf_results[item["frame_target"]] = 0.0
+
+    # Batch Pass 3: SigLIP Scene Evaluation on full frames (if no faces detected)
+    scene_results = {}
+    if scene_items:
+        frames_pil = [item["pil_frame"] for item in scene_items]
+        batch_l_scene = model_manager.batch_infer("ai_deepfake_real", frames_pil)
+        if batch_l_scene is not None:
+            scene_probs = torch.softmax(batch_l_scene, dim=-1)
+            for idx, item in enumerate(scene_items):
+                p_ai = float(scene_probs[idx][0].item())
+                p_df_scene = float(scene_probs[idx][1].item())
+                scene_results[item["frame_target"]] = float(p_df_scene + p_ai * 0.95)
+        else:
+            for item in scene_items:
+                scene_results[item["frame_target"]] = 0.10
 
     # Aggregate frame-level results
     frame_evaluations: List[Dict[str, Any]] = []

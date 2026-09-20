@@ -96,8 +96,8 @@ export default function Navbar() {
     { label: 'History', href: '/history', icon: History },
   ];
 
-  const displayName = user?.name || 'Anand Patel';
-  const initialLetter = displayName.charAt(0).toUpperCase() || 'A';
+  const displayName = user?.name || '';
+  const initialLetter = displayName ? displayName.charAt(0).toUpperCase() : 'U';
 
   return (
     <header className="sticky top-0 z-50 bg-[#060913]/90 backdrop-blur-md border-b border-slate-800/80 transition-colors duration-200 shadow-md">
@@ -158,44 +158,44 @@ export default function Navbar() {
               </button>
             )}
 
-            {/* User Profile Pill */}
-            <div className="relative hidden sm:block">
-              <button
-                type="button"
-                onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                className="flex items-center space-x-2 bg-slate-900/90 border border-slate-700/80 pl-1 pr-2.5 py-1 rounded-full text-xs font-semibold text-slate-200 hover:border-slate-600 transition-all focus:outline-none shadow-sm"
-              >
-                <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-bold text-xs flex items-center justify-center flex-shrink-0 shadow-sm">
-                  {initialLetter}
-                </div>
-                <span className="truncate max-w-[110px]">{displayName}</span>
-                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-              </button>
-
-              {/* User Dropdown Menu */}
-              {isUserMenuOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-[#0b1222] border border-slate-700/80 rounded-xl shadow-xl py-1.5 z-50 animate-fadeIn">
-                  <div className="px-3.5 py-2 border-b border-slate-800">
-                    <p className="text-xs font-bold text-white truncate">{displayName}</p>
-                    <p className="text-[10px] text-slate-400 truncate">{user?.email || 'security@fakeinfodetector.ai'}</p>
+            {/* User Profile Pill / Auth Buttons (Desktop) */}
+            {user ? (
+              <div className="relative hidden sm:block">
+                <button
+                  type="button"
+                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                  className="flex items-center space-x-2 bg-slate-900/90 border border-slate-700/80 pl-1 pr-2.5 py-1 rounded-full text-xs font-semibold text-slate-200 hover:border-slate-600 transition-all focus:outline-none shadow-sm"
+                >
+                  <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-bold text-xs flex items-center justify-center flex-shrink-0 shadow-sm">
+                    {initialLetter}
                   </div>
-                  <Link
-                    href="/dashboard"
-                    onClick={() => setIsUserMenuOpen(false)}
-                    className="flex items-center space-x-2 px-3.5 py-2 text-xs text-slate-300 hover:text-white hover:bg-slate-800/60"
-                  >
-                    <LayoutDashboard className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Analytics Dashboard</span>
-                  </Link>
-                  <Link
-                    href="/history"
-                    onClick={() => setIsUserMenuOpen(false)}
-                    className="flex items-center space-x-2 px-3.5 py-2 text-xs text-slate-300 hover:text-white hover:bg-slate-800/60"
-                  >
-                    <History className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Verification History</span>
-                  </Link>
-                  {user ? (
+                  <span className="truncate max-w-[110px]">{user.name}</span>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                </button>
+
+                {/* User Dropdown Menu */}
+                {isUserMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-52 bg-[#0b1222] border border-slate-700/80 rounded-xl shadow-xl py-1.5 z-50 animate-fadeIn">
+                    <div className="px-3.5 py-2 border-b border-slate-800">
+                      <p className="text-xs font-bold text-white truncate">{user.name}</p>
+                      <p className="text-[10px] text-slate-400 truncate">{user.email}</p>
+                    </div>
+                    <Link
+                      href="/dashboard"
+                      onClick={() => setIsUserMenuOpen(false)}
+                      className="flex items-center space-x-2 px-3.5 py-2 text-xs text-slate-300 hover:text-white hover:bg-slate-800/60"
+                    >
+                      <LayoutDashboard className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Analytics Dashboard</span>
+                    </Link>
+                    <Link
+                      href="/history"
+                      onClick={() => setIsUserMenuOpen(false)}
+                      className="flex items-center space-x-2 px-3.5 py-2 text-xs text-slate-300 hover:text-white hover:bg-slate-800/60"
+                    >
+                      <History className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Verification History</span>
+                    </Link>
                     <button
                       onClick={handleLogout}
                       className="w-full flex items-center space-x-2 px-3.5 py-2 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 text-left border-t border-slate-800"
@@ -203,21 +203,25 @@ export default function Navbar() {
                       <LogOut className="w-3.5 h-3.5" />
                       <span>Log Out</span>
                     </button>
-                  ) : (
-                    <div className="border-t border-slate-800 pt-1">
-                      <Link
-                        href="/login"
-                        onClick={() => setIsUserMenuOpen(false)}
-                        className="flex items-center space-x-2 px-3.5 py-2 text-xs text-cyan-400 hover:text-cyan-300 hover:bg-slate-800/60"
-                      >
-                        <LogIn className="w-3.5 h-3.5" />
-                        <span>Sign In</span>
-                      </Link>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="hidden sm:flex items-center space-x-2">
+                <Link
+                  href="/login"
+                  className="px-3 py-1.5 rounded-lg border border-slate-700/80 text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-800/60 transition-all"
+                >
+                  Sign In
+                </Link>
+                <Link
+                  href="/register"
+                  className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 text-white text-xs font-semibold hover:from-cyan-500 hover:to-blue-500 transition-all shadow-sm shadow-blue-500/20"
+                >
+                  Register
+                </Link>
+              </div>
+            )}
 
             {/* Mobile Hamburger Menu Button */}
             <button

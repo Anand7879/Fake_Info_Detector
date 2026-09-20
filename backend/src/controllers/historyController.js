@@ -1,5 +1,15 @@
 const db = require('../config/db');
 
+function safeJsonParse(val, fallback = null) {
+  if (!val) return fallback;
+  if (typeof val === 'object') return val;
+  try {
+    return JSON.parse(val);
+  } catch (e) {
+    return fallback;
+  }
+}
+
 async function getHistory(req, res) {
   try {
     const userId = req.user ? req.user.id : null;
@@ -7,7 +17,8 @@ async function getHistory(req, res) {
     const params = [];
 
     if (userId) {
-      query += ' WHERE user_id = ?';
+      // Return records created by this user or saved during session
+      query += ' WHERE user_id = ? OR user_id IS NULL';
       params.push(userId);
     }
 
@@ -15,11 +26,11 @@ async function getHistory(req, res) {
 
     const records = await db.all(query, params);
 
-    // Parse serialized JSON columns
-    const formatted = records.map(r => ({
+    // Parse serialized JSON columns safely
+    const formatted = (records || []).map(r => ({
       ...r,
-      explanation: typeof r.explanation_json === 'string' ? JSON.parse(r.explanation_json) : r.explanation_json,
-      indicators: typeof r.indicators_json === 'string' ? JSON.parse(r.indicators_json) : r.indicators_json
+      explanation: typeof r.explanation_json === 'string' ? safeJsonParse(r.explanation_json, []) : (r.explanation_json || []),
+      indicators: typeof r.indicators_json === 'string' ? safeJsonParse(r.indicators_json, {}) : (r.indicators_json || {})
     }));
 
     return res.json({ count: formatted.length, verifications: formatted });
@@ -39,8 +50,8 @@ async function getVerificationById(req, res) {
 
     const formatted = {
       ...record,
-      explanation: typeof record.explanation_json === 'string' ? JSON.parse(record.explanation_json) : record.explanation_json,
-      indicators: typeof record.indicators_json === 'string' ? JSON.parse(record.indicators_json) : record.indicators_json
+      explanation: typeof record.explanation_json === 'string' ? safeJsonParse(record.explanation_json, []) : (record.explanation_json || []),
+      indicators: typeof record.indicators_json === 'string' ? safeJsonParse(record.indicators_json, {}) : (record.indicators_json || {})
     };
 
     return res.json(formatted);

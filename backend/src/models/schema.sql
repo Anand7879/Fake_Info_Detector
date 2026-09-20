@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- Verifications Table
 CREATE TABLE IF NOT EXISTS verifications (
     id TEXT PRIMARY KEY,
-    user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    user_id TEXT,
     modality TEXT NOT NULL, -- 'text', 'image', 'video', 'url', 'document'
     input_summary TEXT NOT NULL,
     prediction TEXT NOT NULL, -- 'real', 'fake', 'suspicious'
