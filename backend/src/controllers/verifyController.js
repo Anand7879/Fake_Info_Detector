@@ -16,27 +16,41 @@ async function saveVerificationRecord({
   const recordId = crypto.randomUUID ? crypto.randomUUID() : 'scan_' + Date.now();
   const weights = result.weights || {};
   
-  await db.run(
-    `INSERT INTO verifications (
-      id, user_id, modality, input_summary, prediction,
-      confidence_score, model_score, rule_score, composite_score,
-      explanation_json, indicators_json, file_path
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      recordId,
-      userId || null,
-      modality,
-      inputSummary.substring(0, 500),
-      result.prediction,
-      result.confidence_score,
-      weights.model_probability !== undefined ? weights.model_probability : null,
-      weights.rule_score !== undefined ? weights.rule_score : null,
-      weights.composite_score !== undefined ? weights.composite_score : null,
-      JSON.stringify(result.explanation || []),
-      JSON.stringify(result.indicators || {}),
-      filePath
-    ]
-  );
+  const insertSql = `INSERT INTO verifications (
+    id, user_id, modality, input_summary, prediction,
+    confidence_score, model_score, rule_score, composite_score,
+    explanation_json, indicators_json, file_path
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+  const getParams = (targetUserId) => [
+    recordId,
+    targetUserId,
+    (inputSummary || '').substring(0, 500),
+    result.prediction,
+    result.confidence_score,
+    weights.model_probability !== undefined ? weights.model_probability : null,
+    weights.rule_score !== undefined ? weights.rule_score : null,
+    weights.composite_score !== undefined ? weights.composite_score : null,
+    JSON.stringify(result.explanation || []),
+    JSON.stringify(result.indicators || {}),
+    filePath
+  ];
+
+  try {
+    await db.run(insertSql, getParams(userId || null));
+  } catch (dbErr) {
+    // If foreign key constraint fails (e.g. legacy token user_id not found in new DB), fallback to null user_id
+    if (userId && (dbErr.code === '23503' || String(dbErr.message).includes('foreign key constraint'))) {
+      console.warn(`[Verify] Foreign key violation for userId ${userId}. Falling back to anonymous scan record.`);
+      try {
+        await db.run(insertSql, getParams(null));
+      } catch (retryErr) {
+        console.error('[Verify] Retry save record failed:', retryErr.message);
+      }
+    } else {
+      console.error('[Verify] Failed to save verification record to DB:', dbErr.message);
+    }
+  }
 
   return recordId;
 }

@@ -66,17 +66,14 @@ def check_ai_generator_watermark(frame: np.ndarray) -> Tuple[bool, Optional[str]
 def verify_video(
     video_path: str,
     sample_interval_frames: int = 10,
-    max_frames_to_process: int = 10
+    max_frames_to_process: int = 6
 ) -> Dict[str, Any]:
     """
     High-Precision, Low-Latency Deepfake Video Verification Pipeline:
-    1. Uniformly extracts 10 keyframes across video duration, skipping edge intro/outro transitions.
-    2. Fast 512px downscaling for 2.5x CPU throughput acceleration.
+    1. Uniformly extracts keyframes across video duration, skipping edge intro/outro transitions.
+    2. Fast 512px downscaling for CPU inference acceleration without losing micro-textures.
     3. AI Generator Watermark Forensics: Scans for synthetic platform signatures (Magic Hour, Runway, etc.).
-    4. Face-Focused Routing:
-       - When faces are present: Evaluates DeepFake-v2, CommunityForensics ViT, and SigLIP-2 strictly on
-         the cropped face (preventing full-frame background squashing from causing false positives).
-       - When NO faces are present: Evaluates SigLIP-2 on the full frame for generative AI video synthesis.
+    4. Face-Focused Routing with Single-Pass Model Inference (models loaded once, not reloaded per frame).
     5. Sustained Anomaly Decision Engine: Robust across both face-swaps, talking-head animations, and authentic camera footage.
     """
     if not os.path.exists(video_path):
@@ -99,12 +96,8 @@ def verify_video(
     valid_range = max(1, end_f - start_f)
     target_indices = [start_f + int(i * valid_range / max(1, samples_count - 1)) for i in range(samples_count)]
 
-    frame_evaluations: List[Dict[str, Any]] = []
+    raw_candidates = []
     face_centers: List[Tuple[float, float]] = []
-    face_v2_scores: List[float] = []
-    face_cf_scores: List[float] = []
-    scene_anomalies: List[float] = []
-    suspicious_frames: List[Dict[str, Any]] = []
     watermark_hits: List[str] = []
 
     for frame_target in target_indices:
@@ -137,91 +130,129 @@ def verify_video(
         else:
             frame_resized = frame
 
-        # Face Detection
+        # Face Detection with safe fallback
         faces = get_accurate_faces(frame_resized, max_faces=1)
         if not faces:
             try:
-                cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-                face_cascade = cv2.CascadeClassifier(cascade_path)
-                gray_res = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
-                haar_faces = face_cascade.detectMultiScale(gray_res, scaleFactor=1.1, minNeighbors=4, minSize=(36, 36))
-                for (hx, hy, hw, hh) in haar_faces:
-                    faces.append((hx, hy, hw, hh, 0.80))
-                    break
+                if hasattr(cv2, "CascadeClassifier") and hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
+                    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+                    if os.path.exists(cascade_path):
+                        face_cascade = cv2.CascadeClassifier(cascade_path)
+                        gray_res = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
+                        haar_faces = face_cascade.detectMultiScale(gray_res, scaleFactor=1.1, minNeighbors=4, minSize=(36, 36))
+                        for (hx, hy, hw, hh) in haar_faces:
+                            faces.append((hx, hy, hw, hh, 0.80))
+                            break
             except Exception:
                 pass
 
+        pil_face = None
         has_face = False
-        face_fake_score = 0.0
-        p_v2, s_cf = 0.0, 0.0
-        scene_fake_score = 0.0
-
         if faces:
             has_face = True
             fx, fy, fw, fh, _ = faces[0]
             cx, cy = fx + fw / 2.0, fy + fh / 2.0
             face_centers.append((cx, cy))
-
             crop_res = extract_face_crop_with_margin(frame_resized, (fx, fy, fw, fh), margin_ratio=0.15)
             if crop_res is not None:
                 face_crop, _ = crop_res
                 pil_face = Image.fromarray(cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB))
 
-                # 1. Deep-Fake-Detector-v2 (ViT)
-                l_v2 = model_manager.infer("deepfake_v2", pil_face)
-                if l_v2 is not None:
-                    p_v2 = float(torch.softmax(l_v2, dim=-1)[0][1].item())
-                else:
-                    p_v2 = 0.10
+        rgb_frame = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+        pil_frame = Image.fromarray(rgb_frame)
 
-                # 2. CommunityForensics Deepfake ViT (Sigmoid)
-                l_cf = model_manager.infer("community_forensics", pil_face)
-                if l_cf is not None:
-                    s_cf = float(torch.sigmoid(l_cf).item())
-                else:
-                    s_cf = 0.0
+        raw_candidates.append({
+            "frame_target": frame_target,
+            "timestamp_sec": timestamp_sec,
+            "timestamp_fmt": timestamp_fmt,
+            "has_wm": has_wm,
+            "has_face": has_face,
+            "pil_face": pil_face,
+            "pil_frame": pil_frame
+        })
 
-                face_v2_scores.append(p_v2)
-                face_cf_scores.append(s_cf)
-                face_fake_score = max(p_v2, s_cf)
+    cap.release()
+
+    # -------------------------------------------------------------
+    # High-Performance Single-Pass Model Inference
+    # Models are evaluated in single passes to eliminate repeated load/unload disk churn
+    # -------------------------------------------------------------
+    face_items = [c for c in raw_candidates if c["has_face"] and c["pil_face"] is not None]
+    scene_items = [c for c in raw_candidates if not c["has_face"] or c["pil_face"] is None]
+
+    # Pass 1: DeepFake-Detector-v2 on all faces
+    v2_results = {}
+    for item in face_items:
+        l_v2 = model_manager.infer("deepfake_v2", item["pil_face"])
+        p_v2 = float(torch.softmax(l_v2, dim=-1)[0][1].item()) if l_v2 is not None else 0.10
+        v2_results[item["frame_target"]] = p_v2
+
+    # Pass 2: CommunityForensics on all faces
+    cf_results = {}
+    for item in face_items:
+        l_cf = model_manager.infer("community_forensics", item["pil_face"])
+        s_cf = float(torch.sigmoid(l_cf).item()) if l_cf is not None else 0.0
+        cf_results[item["frame_target"]] = s_cf
+
+    # Pass 3: Scene Evaluation for non-face frames
+    scene_results = {}
+    for item in scene_items:
+        l_scene = model_manager.infer("ai_deepfake_real", item["pil_frame"])
+        if l_scene is not None:
+            p_scene = torch.softmax(l_scene, dim=-1)[0]
+            p_ai = float(p_scene[0].item())
+            p_df_scene = float(p_scene[1].item())
+            scene_fake_score = float(p_df_scene + p_ai * 0.95)
         else:
-            # When NO face is present: Evaluate full-frame scene with SigLIP-2 for generative AI
-            rgb_frame = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-            pil_frame = Image.fromarray(rgb_frame)
-            l_scene = model_manager.infer("ai_deepfake_real", pil_frame)
-            if l_scene is not None:
-                p_scene = torch.softmax(l_scene, dim=-1)[0]
-                p_ai = float(p_scene[0].item())
-                p_df_scene = float(p_scene[1].item())
-                scene_fake_score = float(p_df_scene + p_ai * 0.95)
-            else:
-                scene_fake_score = 0.10
-            scene_anomalies.append(scene_fake_score)
+            scene_fake_score = 0.10
+        scene_results[item["frame_target"]] = scene_fake_score
 
-        frame_score = face_fake_score if has_face else scene_fake_score
+    # Aggregate frame-level results
+    frame_evaluations: List[Dict[str, Any]] = []
+    face_v2_scores: List[float] = []
+    face_cf_scores: List[float] = []
+    scene_anomalies: List[float] = []
+    suspicious_frames: List[Dict[str, Any]] = []
+
+    for c in raw_candidates:
+        ft = c["frame_target"]
+        has_face = c["has_face"] and (c["pil_face"] is not None)
+        has_wm = c["has_wm"]
+
+        if has_face:
+            p_v2 = v2_results.get(ft, 0.10)
+            s_cf = cf_results.get(ft, 0.0)
+            face_v2_scores.append(p_v2)
+            face_cf_scores.append(s_cf)
+            face_fake_score = max(p_v2, s_cf)
+            scene_fake_score = None
+            frame_score = face_fake_score
+        else:
+            face_fake_score = None
+            scene_fake_score = scene_results.get(ft, 0.10)
+            scene_anomalies.append(scene_fake_score)
+            frame_score = scene_fake_score
 
         frame_info = {
-            "frame_index": frame_target,
-            "timestamp_seconds": timestamp_sec,
-            "timestamp_formatted": timestamp_fmt,
+            "frame_index": ft,
+            "timestamp_seconds": c["timestamp_sec"],
+            "timestamp_formatted": c["timestamp_fmt"],
             "has_face": has_face,
             "frame_score": round(frame_score, 4),
-            "face_fake_score": round(face_fake_score, 4) if has_face else None,
-            "scene_fake_score": round(scene_fake_score, 4) if not has_face else None,
+            "face_fake_score": round(face_fake_score, 4) if face_fake_score is not None else None,
+            "scene_fake_score": round(scene_fake_score, 4) if scene_fake_score is not None else None,
             "has_ai_watermark": has_wm
         }
         frame_evaluations.append(frame_info)
 
         if frame_score >= 0.45 or has_wm:
             suspicious_frames.append({
-                "frame_index": frame_target,
-                "timestamp_seconds": timestamp_sec,
-                "timestamp_formatted": timestamp_fmt,
+                "frame_index": ft,
+                "timestamp_seconds": c["timestamp_sec"],
+                "timestamp_formatted": c["timestamp_fmt"],
                 "frame_fake_percentage": round((1.0 if has_wm else frame_score) * 100, 1),
                 "anomaly_type": "AI Platform Watermark" if has_wm else ("Facial Deepfake ViT Anomaly" if has_face else "Generative AI Scene Artifact")
             })
-
-    cap.release()
 
     if not frame_evaluations:
         return format_verification_response(

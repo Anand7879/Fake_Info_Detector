@@ -7,6 +7,16 @@ import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
+curr_dir = os.path.dirname(os.path.abspath(__file__))
+for ep in [
+    os.path.join(curr_dir, ".env"),
+    os.path.join(curr_dir, "..", ".env"),
+    os.path.join(curr_dir, "..", "..", ".env"),
+    os.path.join(os.getcwd(), ".env"),
+    os.path.join(os.getcwd(), "ai-engine", ".env")
+]:
+    if os.path.exists(ep):
+        load_dotenv(ep)
 load_dotenv()
 
 # Authoritative & Fact-Checking Known Domains

@@ -134,10 +134,13 @@ class ModelManager:
         model_id = conf["id"]
         model_cls = conf["cls"]
 
-        # Memory optimization for 512MB cloud free tiers (e.g. Render / Koyeb):
-        # Keep at most 1 active vision transformer in RAM at a time to stay strictly below 512MiB.
-        if len(self.loaded_models) >= 1:
-            logger.info(f"[ModelManager] Freeing memory before loading {key}...")
+        # Check if strictly running in low-memory CPU container (e.g. Render 512MB free tier)
+        is_low_mem = (
+            os.getenv("LOW_MEMORY_MODE", "false").lower() in ("true", "1", "yes") or
+            (os.getenv("RENDER") == "true" and not torch.cuda.is_available())
+        )
+        if is_low_mem and len(self.loaded_models) >= 1:
+            logger.info(f"[ModelManager] Low memory mode: freeing memory before loading {key}...")
             self.loaded_models.clear()
             self.loaded_processors.clear()
             import gc
@@ -169,6 +172,21 @@ class ModelManager:
                 return outputs.logits
         except Exception as e:
             logger.warning(f"[ModelManager] Inference error on {key}: {e}")
+            return None
+
+    def batch_infer(self, key: str, images: List[Image.Image]) -> Optional[torch.Tensor]:
+        if not images:
+            return None
+        model, proc = self._get_or_load(key)
+        if model is None or proc is None:
+            return None
+        try:
+            inputs = proc(images=images, return_tensors="pt").to(self.device)
+            with torch.no_grad():
+                outputs = model(**inputs)
+                return outputs.logits
+        except Exception as e:
+            logger.warning(f"[ModelManager] Batch inference error on {key}: {e}")
             return None
 
 
@@ -366,28 +384,37 @@ def get_accurate_faces(img_bgr: np.ndarray, max_faces: int = 5) -> List[Tuple[in
         except Exception as e:
             logger.warning(f"YuNet face detection encountered an error: {e}")
 
-    # Fallback: Strict Non-Maximum Suppressed Haar Cascade
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-    face_cascade = cv2.CascadeClassifier(cascade_path)
-    min_dim = max(48, int(min(w, h) * 0.06))
-    raw_faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=8, minSize=(min_dim, min_dim))
-    
-    if len(raw_faces) > 0:
-        boxes = [[int(x), int(y), int(bw), int(bh)] for (x, y, bw, bh) in raw_faces]
-        scores = [1.0] * len(boxes)
-        indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold=0.5, nms_threshold=0.3)
-        for idx in indices:
-            i = idx[0] if isinstance(idx, (list, tuple, np.ndarray)) else idx
-            fx, fy, fw, fh = boxes[i]
-            aspect = fw / float(fh) if fh > 0 else 0
-            if 0.60 <= aspect <= 1.40:
-                fx = max(0, min(w - 1, fx))
-                fy = max(0, min(h - 1, fy))
-                fw = max(1, min(w - fx, fw))
-                fh = max(1, min(h - fy, fh))
-                faces_list.append((fx, fy, fw, fh, 0.85))
+    # Fallback: Strict Non-Maximum Suppressed Haar Cascade (wrapped safely for all cv2 builds)
+    try:
+        has_cascade = hasattr(cv2, "CascadeClassifier") and hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades")
+        if has_cascade:
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            if os.path.exists(cascade_path):
+                face_cascade = cv2.CascadeClassifier(cascade_path)
+                min_dim = max(48, int(min(w, h) * 0.06))
+                gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+                raw_faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=8, minSize=(min_dim, min_dim))
                 
+                if len(raw_faces) > 0:
+                    boxes = [[int(x), int(y), int(bw), int(bh)] for (x, y, bw, bh) in raw_faces]
+                    scores = [1.0] * len(boxes)
+                    if hasattr(cv2, "dnn") and hasattr(cv2.dnn, "NMSBoxes"):
+                        indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold=0.5, nms_threshold=0.3)
+                    else:
+                        indices = [[i] for i in range(len(boxes))]
+                    for idx in indices:
+                        i = idx[0] if isinstance(idx, (list, tuple, np.ndarray)) else idx
+                        fx, fy, fw, fh = boxes[i]
+                        aspect = fw / float(fh) if fh > 0 else 0
+                        if 0.60 <= aspect <= 1.40:
+                            fx = max(0, min(w - 1, fx))
+                            fy = max(0, min(h - 1, fy))
+                            fw = max(1, min(w - fx, fw))
+                            fh = max(1, min(h - fy, fh))
+                            faces_list.append((fx, fy, fw, fh, 0.85))
+    except Exception as e:
+        logger.warning(f"Haar Cascade face detection encountered an error or is unsupported: {e}")
+            
     faces_list = sorted(faces_list, key=lambda f: f[2] * f[3], reverse=True)[:max_faces]
     return faces_list
 

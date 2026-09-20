@@ -21,7 +21,23 @@ from modules.url_detector import verify_url
 from modules.document_detector import verify_document
 from modules.utils import format_verification_response
 
+# Robust multi-path .env search across ai-engine, root repo, and working directory
+curr_dir = os.path.dirname(os.path.abspath(__file__))
+for ep in [
+    os.path.join(curr_dir, ".env"),
+    os.path.join(curr_dir, "..", ".env"),
+    os.path.join(os.getcwd(), ".env"),
+    os.path.join(os.getcwd(), "ai-engine", ".env")
+]:
+    if os.path.exists(ep):
+        load_dotenv(ep)
 load_dotenv()
+
+_g_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+if _g_key:
+    print(f"[AIEngine] Gemini API Key configured (key starts with: {_g_key[:6]}..., length: {len(_g_key)})")
+else:
+    print("[AIEngine] WARNING: GEMINI_API_KEY is not set. Fact-checking will use local IFCN heuristics.")
 
 app = FastAPI(
     title="Fake Info Detector - AI Forensics Engine",
