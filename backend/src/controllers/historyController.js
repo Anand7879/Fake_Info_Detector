@@ -13,18 +13,17 @@ function safeJsonParse(val, fallback = null) {
 async function getHistory(req, res) {
   try {
     const userId = req.user ? req.user.id : null;
-    let query = 'SELECT * FROM verifications';
-    const params = [];
+    let records = [];
 
     if (userId) {
-      // Return records created by this user or saved during session
-      query += ' WHERE user_id = ? OR user_id IS NULL';
-      params.push(userId);
+      // First check if this user has their own scans
+      records = await db.all('SELECT * FROM verifications WHERE user_id = ? ORDER BY created_at DESC', [userId]);
     }
 
-    query += ' ORDER BY created_at DESC';
-
-    const records = await db.all(query, params);
+    // If user has no personal scans yet or browsing as guest, show platform verification feed
+    if (!records || records.length === 0) {
+      records = await db.all('SELECT * FROM verifications ORDER BY created_at DESC LIMIT 100');
+    }
 
     // Parse serialized JSON columns safely
     const formatted = (records || []).map(r => ({
@@ -97,15 +96,15 @@ async function deleteMultipleVerifications(req, res) {
 async function getDashboardStats(req, res) {
   try {
     const userId = req.user ? req.user.id : null;
-    let query = 'SELECT modality, prediction, confidence_score, created_at FROM verifications';
-    const params = [];
-    if (userId) {
-      query += ' WHERE user_id = ?';
-      params.push(userId);
-    }
-    query += ' ORDER BY created_at DESC';
+    let records = [];
 
-    const records = await db.all(query, params);
+    if (userId) {
+      records = await db.all('SELECT modality, prediction, confidence_score, created_at FROM verifications WHERE user_id = ? ORDER BY created_at DESC', [userId]);
+    }
+
+    if (!records || records.length === 0) {
+      records = await db.all('SELECT modality, prediction, confidence_score, created_at FROM verifications ORDER BY created_at DESC LIMIT 100');
+    }
 
     const totalScans = records.length;
     const fakeCount = records.filter(r => r.prediction === 'fake').length;
