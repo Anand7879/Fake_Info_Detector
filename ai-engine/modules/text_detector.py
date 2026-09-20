@@ -19,6 +19,15 @@ def get_ml_classifier():
         return _classifier_pipeline
     
     _model_load_attempted = True
+
+    # In 512MB cloud free tier environments (Render sets RENDER=true),
+    # loading a 1.02GB DistilBART model causes instant Linux OOM SIGKILL (502 Bad Gateway).
+    # Instead, we rely on Live Authoritative IFCN Web Fact-Checking + Lexical analysis, which uses <30MB RAM.
+    if os.getenv("RENDER") or os.getenv("LOW_MEMORY_MODE", "").lower() in ("true", "1"):
+        print("[TextDetector] Cloud 512MB RAM environment detected (RENDER=true). Using Live IFCN Web Fact-Checking to prevent OOM crash.")
+        _classifier_pipeline = None
+        return None
+
     try:
         from transformers import pipeline
         model_name = os.getenv("TEXT_MODEL_NAME", "valhalla/distilbart-mnli-12-3")

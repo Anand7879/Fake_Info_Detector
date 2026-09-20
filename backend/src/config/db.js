@@ -4,13 +4,19 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
-const dbUrl = process.env.DATABASE_URL || 'sqlite://./fakeinfo.sqlite';
+const dbUrl = (process.env.DATABASE_URL || '').trim();
 const isPostgres = dbUrl.startsWith('postgres://') || dbUrl.startsWith('postgresql://');
 
 let db = null;
 let dbType = 'json_store';
 
-// Fallback JSON-backed storage in case native binary bindings are absent
+// Helper to convert SQLite/MySQL '?' positional placeholders to PostgreSQL '$1, $2, $3...'
+function formatPgSql(sql) {
+  let paramIndex = 1;
+  return sql.replace(/\?/g, () => `$${paramIndex++}`);
+}
+
+// Fallback JSON-backed storage in case database is absent
 const JSON_DB_FILE = path.join(__dirname, '..', '..', 'fakeinfo_store.json');
 
 function initJsonStore() {
@@ -40,15 +46,16 @@ function writeJsonStore(data) {
 const dbAdapter = {
   // Execute a query returning multiple rows
   all: async (sql, params = []) => {
-    if (dbType === 'better-sqlite3') {
+    if (dbType === 'postgres') {
+      const pgSql = formatPgSql(sql);
+      const res = await db.query(pgSql, params);
+      return res.rows || [];
+    } else if (dbType === 'better-sqlite3') {
       return db.prepare(sql).all(...params);
     } else if (dbType === 'sqlite3') {
       return new Promise((resolve, reject) => {
         db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
       });
-    } else if (dbType === 'postgres') {
-      const res = await db.query(sql, params);
-      return res.rows;
     } else {
       // JSON Store fallback
       const store = readJsonStore();
@@ -71,38 +78,39 @@ const dbAdapter = {
 
   // Execute a query returning a single row
   get: async (sql, params = []) => {
-    if (dbType === 'better-sqlite3') {
+    if (dbType === 'postgres') {
+      const pgSql = formatPgSql(sql);
+      const res = await db.query(pgSql, params);
+      return (res.rows && res.rows[0]) ? res.rows[0] : null;
+    } else if (dbType === 'better-sqlite3') {
       return db.prepare(sql).get(...params);
     } else if (dbType === 'sqlite3') {
       return new Promise((resolve, reject) => {
         db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
       });
-    } else if (dbType === 'postgres') {
-      const res = await db.query(sql, params);
-      return res.rows[0];
     } else {
       // JSON Store fallback
       const store = readJsonStore();
       const lower = sql.toLowerCase();
       if (lower.includes('from users')) {
         if (lower.includes('email =') && params.length > 0) {
-          return store.users.find(u => u.email.toLowerCase() === params[0].toLowerCase());
+          return store.users.find(u => u.email.toLowerCase() === params[0].toLowerCase()) || null;
         }
         if (lower.includes('id =') && params.length > 0) {
-          return store.users.find(u => u.id === params[0]);
+          return store.users.find(u => u.id === params[0]) || null;
         }
       } else if (lower.includes('from verifications')) {
         if (lower.includes('id =') && params.length > 0) {
-          return store.verifications.find(v => v.id === params[0]);
+          return store.verifications.find(v => v.id === params[0]) || null;
         }
       } else if (lower.includes('from password_resets')) {
         if (lower.includes('email =') && lower.includes('code =') && params.length >= 2) {
           return store.password_resets.find(
             r => r.email.toLowerCase() === params[0].toLowerCase() && r.code === params[1] && r.used === 0
-          );
+          ) || null;
         }
         if (lower.includes('code =') && params.length > 0) {
-          return store.password_resets.find(r => r.code === params[0] && r.used === 0);
+          return store.password_resets.find(r => r.code === params[0] && r.used === 0) || null;
         }
       }
       return null;
@@ -111,7 +119,11 @@ const dbAdapter = {
 
   // Execute an insert/update/delete
   run: async (sql, params = []) => {
-    if (dbType === 'better-sqlite3') {
+    if (dbType === 'postgres') {
+      const pgSql = formatPgSql(sql);
+      const res = await db.query(pgSql, params);
+      return { changes: res.rowCount, lastID: null };
+    } else if (dbType === 'better-sqlite3') {
       const info = db.prepare(sql).run(...params);
       return { changes: info.changes, lastID: info.lastInsertRowid };
     } else if (dbType === 'sqlite3') {
@@ -121,9 +133,6 @@ const dbAdapter = {
           else resolve({ changes: this.changes, lastID: this.lastID });
         });
       });
-    } else if (dbType === 'postgres') {
-      const res = await db.query(sql, params);
-      return { changes: res.rowCount };
     } else {
       // JSON Store fallback
       const store = readJsonStore();
@@ -215,16 +224,36 @@ const dbAdapter = {
   }
 };
 
-function initializeDatabase() {
+async function initializeDatabase() {
   if (isPostgres) {
     try {
       const { Pool } = require('pg');
-      db = new Pool({ connectionString: dbUrl });
-      dbType = 'postgres';
-      console.log('[DB] Connected to PostgreSQL database.');
-      return;
+      const isLocal = dbUrl.includes('localhost') || dbUrl.includes('127.0.0.1');
+      db = new Pool({
+        connectionString: dbUrl,
+        ssl: isLocal ? false : { rejectUnauthorized: false },
+        connectionTimeoutMillis: 10000,
+        idleTimeoutMillis: 30000
+      });
+
+      // Test connection & apply schema
+      const client = await db.connect();
+      try {
+        console.log('[DB] Connected to PostgreSQL database successfully.');
+        const schemaPath = path.join(__dirname, '..', 'models', 'schema.sql');
+        if (fs.existsSync(schemaPath)) {
+          const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
+          await client.query(schemaSql);
+          console.log('[DB] PostgreSQL schema initialized & verified (users, verifications, password_resets tables active).');
+        }
+        dbType = 'postgres';
+        return;
+      } finally {
+        client.release();
+      }
     } catch (e) {
-      console.warn('[DB] pg module unavailable, attempting SQLite fallback...');
+      console.error('[DB] PostgreSQL connection failed:', e.message);
+      console.warn('[DB] Falling back to SQLite/JSON store...');
     }
   }
 
@@ -236,9 +265,11 @@ function initializeDatabase() {
     dbType = 'better-sqlite3';
     console.log('[DB] Connected to SQLite via better-sqlite3 at:', sqlitePath);
 
-    // Run schema migrations
-    const schemaSql = fs.readFileSync(path.join(__dirname, '..', 'models', 'schema.sql'), 'utf-8');
-    db.exec(schemaSql);
+    const schemaPath = path.join(__dirname, '..', 'models', 'schema.sql');
+    if (fs.existsSync(schemaPath)) {
+      const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
+      db.exec(schemaSql);
+    }
     return;
   } catch (e1) {
     // Try sqlite3
@@ -248,8 +279,11 @@ function initializeDatabase() {
       db = new sqlite3.Database(sqlitePath);
       dbType = 'sqlite3';
       console.log('[DB] Connected to SQLite via sqlite3 at:', sqlitePath);
-      const schemaSql = fs.readFileSync(path.join(__dirname, '..', 'models', 'schema.sql'), 'utf-8');
-      db.exec(schemaSql);
+      const schemaPath = path.join(__dirname, '..', 'models', 'schema.sql');
+      if (fs.existsSync(schemaPath)) {
+        const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
+        db.exec(schemaSql);
+      }
       return;
     } catch (e2) {
       // JSON Store fallback
@@ -260,6 +294,9 @@ function initializeDatabase() {
   }
 }
 
-initializeDatabase();
+// Kick off database initialization immediately
+initializeDatabase().catch(err => {
+  console.error('[DB] Fatal error during DB initialization:', err);
+});
 
 module.exports = dbAdapter;
